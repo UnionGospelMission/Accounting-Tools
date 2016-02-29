@@ -1,0 +1,818 @@
+'---------------------------
+'
+'BEFORE PUBLISHING FORM
+'SET USER PROPERTY FIRSTRUN "NO"
+'
+'---------------------------
+Public hasinit
+hasinit = 0
+Public myinspector
+Public myPage1
+Public myControls
+Public iter
+iter = 0
+
+Sub Item_Open()
+	'INITIALIZE VARIABLES
+	Set myinspector = Item.GetInspector
+	Set myPage1 = myInspector.ModifiedFormPages("Purchase Order")
+	Set myControls = myPage1.Controls
+	myControls("Frame9").Enabled = 1
+
+	hasinit = 1
+	If not myControls("Checkbox12").Value Then
+		Item.Save
+		myTime = Now()
+		myControls("OlkDateControl1").Value = myTime
+		myControls("OlkDateControl2").Value = myTime
+		myControls("TextBox34").Value = cStr(myTime)
+		myControls("TextBox35").Value = cStr(myTime)
+		myControls("TextBox19").Value = (Right(Year(myTime),2) & Right("00" & FormatNumber(Month(myTime), 0, vbTrue), 2) & Right("00" & FormatNumber(Day(myTime), 0, vbTrue), 2) & Right("0000" & cDbl("&H"&Left(Right(Item.EntryId,7),3)),4))
+		myControls("TextBox19").Enabled = 0
+		myControls("Textbox20").Value = Item.Owner
+		myControls("Checkbox12").Value = 1
+		Item.Save
+	End If
+	If Not Item.UserProperties("Special Instructions").Value = "" Then
+		Item.Body = Item.UserProperties("Special Instructions").Value
+	End If
+	refreshForm()
+End Sub
+
+Sub Frame9_Click()
+	If Item.UserProperties("Lock PO").Value Then
+		MsgBox "PO Locked"
+	End If
+End Sub
+
+Sub Item_PropertyChange(ByVal Name)
+	Select Case Name
+		Case "Complete"
+			If Not hasinit Then
+				Set myinspector = Item.GetInspector
+				Set myPage1 = myInspector.ModifiedFormPages("Purchase Order")
+				Set myControls = myPage1.Controls
+			End If
+			If myControls("POStatus").Value = "Recurring" And iter = 0 Then
+				If Not MsgBox("This is a control task"&vbNewLine&vbNewLine&"Override?", vbYesNo, "Confirmation") = vbYes Then
+					myControls("textbox29").Value = ""
+					iter = 1
+					Item.Complete = Not Item.Complete
+					Exit Sub
+				End If
+			End If
+			If iter = 0 Then
+				If Not sha256(myControls("textbox29").Value) = Item.FormDescription.Version Then
+					myControls("textbox29").Value = InputBox("Admin Password")
+					If Not sha256(myControls("textbox29").Value) = Item.FormDescription.Version Then
+						Item.Complete = Not Item.Complete
+					ElseIf Not myControls("Checkbox14").Value Then
+						If MsgBox("Do you want to lock PO?", vbYesNo, "Confirmation") = vbYes Then
+							myControls("Checkbox14").Value = 1
+						End If
+					End If
+				End If
+				iter = 1
+			ElseIf iter = 1 Then
+				iter = 0
+			End If
+			myControls("textbox29").Value = ""
+	End Select
+End Sub
+
+Sub Item_CustomPropertyChange(ByVal Name)
+	If hasinit Then
+		Select Case Name
+      		Case "Payment Method"
+				refreshForm()
+			Case "Pay From This Document"
+				refreshForm()
+			Case "Needs Reimbursement"
+				refreshForm()
+			Case "Designated Funds"
+				refreshForm()
+			Case "Subcategory"
+				refreshForm()
+			Case "Capital Project Checkbox"
+				refreshForm()
+			Case "Replacement Project"
+				refreshForm()
+			Case "POStatus"
+				If myControls("POStatus").Value = "Pending Signature" Then
+					APSendEmail()
+				End If
+				If myControls("POStatus").Value = "Completed" Then
+					If Not sha256(myControls("textbox29").Value) = Item.FormDescription.Version Then
+						myControls("textbox29").Value = InputBox("Admin Password")
+					End If
+					If Not sha256(myControls("textbox29").Value) = Item.FormDescription.Version Then
+						myControls("POStatus").Value = "Submitted"
+					Else
+						Item.UserProperties("My Date Completed").Value = cStr(Now())
+						If Not myControls("Checkbox14").Value Then
+							If MsgBox("Do you want to lock PO?", vbYesNo, "Confirmation") = vbYes Then
+								myControls("Checkbox14").Value = 1
+							End If
+						End If
+						If Item.Importance = 2 Then
+							MsgBox "AP is waiting on PO"
+						End If
+					End If
+					myControls("textbox29").Value = ""
+				End If
+				refreshForm()
+		End Select
+	Else
+		Set myinspector = Item.GetInspector
+		Set myPage1 = myInspector.ModifiedFormPages("Purchase Order")
+		Set myControls = myPage1.Controls
+		If (Item.UserProperties("FirstRun").Value or Name = "FirstRun") And Not sha256(myControls("Textbox29").Value) = Item.FormDescription.Version Then
+			Set myNameSpace = Application.GetNameSpace("MAPI") 
+			Item.UserProperties("Vendor").Value = "PO Compromised by "&myNameSpace.CurrentUser&" "&Item.UserProperties("Vendor").Value
+			Item.UserProperties("Lock PO").Value = 1
+			Set olLook = CreateObject("Outlook.Application")
+			Set NewEmail = olLook.CreateItem(0)
+			strLink = Replace("outlook:"&Item.EntryId, " ", "%20")
+			Set objInsp = NewEmail.GetInspector
+			Set objDoc = objInsp.WordEditor
+			Set objSel = objDoc.Windows(1).Selection
+			objDoc.Hyperlinks.Add objSel.Range, strLink, "", "", "PO# "&myControls("Textbox19").Value, ""
+			With NewEmail
+				.To = Item.FormDescription.Number
+				.Subject = "I just compromised Purchase Order "&myControls("Textbox19").Value
+				.Send
+			End With
+		End If
+	End If
+End Sub
+
+Sub refreshForm()
+	'PAYMENT SELECTION ENABLING/DISABLING
+	If Not myControls("OptionButton1").Value Then
+		myControls("OptionButton6").Value = 0
+		myControls("OptionButton7").Value = 0
+	End If
+	If Not myControls("OptionButton4").Value Then
+		myControls("OptionButton8").Value = 0
+		myControls("OptionButton9").Value = 0
+	End If
+
+	myControls("OptionButton6").Enabled = myControls("OptionButton1").Value
+	myControls("OptionButton7").Enabled = myControls("OptionButton1").Value
+	myControls("Frame8").Enabled = myControls("OptionButton7").Value
+	myControls("Label10").Enabled = myControls("OptionButton7").Value
+	myControls("Label11").Enabled = myControls("OptionButton7").Value
+	myControls("Label12").Enabled = myControls("OptionButton7").Value
+	myControls("Label13").Enabled = myControls("OptionButton7").Value
+	myControls("Label14").Enabled = myControls("OptionButton7").Value
+
+	myControls("OptionButton8").Enabled = myControls("OptionButton4").Value
+	myControls("OptionButton9").Enabled = myControls("OptionButton4").Value
+	myControls("Label16").Enabled = myControls("OptionButton9").Value
+	myControls("Textbox14").Enabled = myControls("OptionButton9").Value
+
+	myControls("Label15").Enabled = myControls("OptionButton3").Value
+	myControls("Textbox13").Enabled = myControls("OptionButton3").Value
+
+	myControls("Label30").Enabled = myControls("OptionButton2").Value Or (_
+						  Not myControls("OptionButton1").Value And _
+						  Not myControls("OptionButton3").Value And _
+						  Not myControls("OptionButton4").Value And _
+						  Not myControls("OptionButton5").Value)
+	myControls("Label31").Enabled = myControls("OptionButton3").Value Or (_
+						  Not myControls("OptionButton1").Value And _
+						  Not myControls("OptionButton2").Value And _
+						  Not myControls("OptionButton4").Value And _
+						  Not myControls("OptionButton5").Value)
+	myControls("Label32").Enabled = myControls("OptionButton5").Value Or (_
+						  Not myControls("OptionButton1").Value And _
+						  Not myControls("OptionButton2").Value And _
+						  Not myControls("OptionButton3").Value And _
+						  Not myControls("OptionButton4").Value)
+	myControls("Label34").Enabled = myControls("OptionButton4").Value Or (_
+						  Not myControls("OptionButton1").Value And _
+						  Not myControls("OptionButton2").Value And _
+						  Not myControls("OptionButton3").Value And _
+						  Not myControls("OptionButton5").Value)
+	myControls("Label35").Enabled = myControls("OptionButton1").Value Or (_
+						  Not myControls("OptionButton2").Value And _
+						  Not myControls("OptionButton3").Value And _
+						  Not myControls("OptionButton4").Value And _
+						  Not myControls("OptionButton5").Value)
+	myControls("Frame6").Enabled = myControls("OptionButton1").Value Or (_
+						  Not myControls("OptionButton2").Value And _
+						  Not myControls("OptionButton3").Value And _
+						  Not myControls("OptionButton4").Value And _
+						  Not myControls("OptionButton5").Value)
+	myControls("Frame7").Enabled = myControls("OptionButton4").Value Or (_
+						  Not myControls("OptionButton1").Value And _
+						  Not myControls("OptionButton2").Value And _
+						  Not myControls("OptionButton3").Value And _
+						  Not myControls("OptionButton5").Value)
+	'SET INSTRUMENT VALUE
+	If myControls("OptionButton2").Value Then
+		Item.UserProperties("Instrument").Value = "Vendor Account"
+	ElseIf myControls("optionButton3").Value Then
+		Item.UserProperties("Instrument").Value = "Credit Card"
+	ElseIf myControls("optionButton5").Value Then
+		Item.UserProperties("Instrument").Value = "Petty Cash"
+	ElseIf myControls("optionButton10").Value Then
+		Item.UserProperties("Instrument").Value = "Not Selected"
+	ElseIf myControls("optionButton6").Value Then
+		Item.UserProperties("Instrument").Value = "Invoice"
+	ElseIf myControls("optionButton7").Value Then
+		Item.UserProperties("Instrument").Value = "By PO"
+	ElseIf myControls("optionButton8").Value Then
+		Item.UserProperties("Instrument").Value = "Donation"
+	ElseIf myControls("optionButton9").Value Then
+		Item.UserProperties("Instrument").Value = "Reimbursement"
+	Else
+		Item.UserProperties("Instrument").Value = "Not Specified"
+	End If
+
+
+	'TEST AND SET DESIGNATED FUNDS
+	myControls("Frame4").Visible = myControls("Checkbox10").Value
+	myControls("Label22").Visible = myControls("Checkbox11").Value
+	myControls("Textbox18").Visible = myControls("Checkbox11").Value
+
+	'TEST AND SET CAPITAL PROJECTS
+	myControls("Frame5").Visible = myControls("Checkbox15").Value
+	myControls("Label29").Visible = myControls("Checkbox17").Value
+	myControls("Textbox25").Visible = myControls("Checkbox17").Value
+	
+	'TEST AND LOCK PO
+	myControls("Frame1").Enabled = Not myControls("Checkbox14").Value
+	myControls("Frame2").Enabled = Not myControls("Checkbox14").Value
+	myControls("Frame4").Enabled = Not myControls("Checkbox14").Value
+	myControls("Frame5").Enabled = Not myControls("Checkbox14").Value
+	myControls("_DocSiteControl1").ReadOnly = myControls("Checkbox14").Value
+	If myControls("Checkbox14").Value Then
+		myControls("CommandButton1").Caption = "Unlock PO"
+		myControls("Frame1").Caption = "Purchase Details (Locked)"
+		myControls("Frame2").Caption = "Payment Method (Locked)"
+		myControls("Frame4").Caption = "Designated Funds (Locked)"
+		myControls("Frame5").Caption = "Capital Project (Locked)"
+		myControls("Frame10").Caption = "Special Instructions/Attachments (Locked)"
+	Else
+		myControls("CommandButton1").Caption = "Lock PO"
+		myControls("Frame1").Caption = "Purchase Details"
+		myControls("Frame2").Caption = "Payment Method"
+		myControls("Frame4").Caption = "Designated Funds"
+		myControls("Frame5").Caption = "Capital Project"
+		myControls("Frame10").Caption = "Special Instructions/Attachments"
+	End If
+
+	'TEST IF HAS BEEN EMAILED
+	myControls("Label44").Visible = myControls("Checkbox19").Value
+	myControls("Textbox32").Visible = myControls("Checkbox19").Value
+	myControls("TextBox37").Visible = myControls("Checkbox19").Value
+	myControls("Label45").Visible = myControls("Checkbox19").Value
+
+	'REFRESH PO NUMBER
+	myControls("Textbox33").Value = myControls("Textbox19").Value
+
+	'REFRESH COMPLETED DATE
+	myControls("TextBox36").Visible = myControls("POStatus").Value = "Completed"
+	myControls("Label48").Visible = myControls("POStatus").Value = "Completed"
+
+
+End Sub
+
+Sub CommandButton1_Click()
+	'LOCK PO
+	If sha256(myControls("textbox29").Value) = Item.FormDescription.Version Then
+		myControls("Checkbox14").Value = Not myControls("Checkbox14").Value
+		refreshForm()
+	Else
+		MsgBox "Invalid Password"
+	End If
+	myControls("textbox29").Value = ""
+End Sub
+
+Sub CommandButton2_Click()
+	'SIGN PO
+	Set myNameSpace = Application.GetNameSpace("MAPI") 
+	myControls("TextBox20").Value = myNameSpace.CurrentUser
+	If myControls("Checkbox18").Value Then
+		Set olLook = CreateObject("Outlook.Application")
+		Set NewEmail = olLook.CreateItem(0)
+		strLink = Replace("outlook:"&Item.EntryId, " ", "%20")
+		With NewEmail
+			.To = Item.FormDescription.Number
+			.Subject = "I just signed Purchase Order "&myControls("Textbox19").Value
+		End With
+		Set objInsp = NewEmail.GetInspector
+		Set objDoc = objInsp.WordEditor
+		Set objSel = objDoc.Windows(1).Selection
+		objDoc.Hyperlinks.Add objSel.Range, strLink, "", "", "PO# "&myControls("Textbox19").Value, ""
+		NewEmail.Display
+		myControls("Checkbox18").Value = 0
+		NewEmail.Send
+	End If
+	myControls("textbox29").Value = "a"
+	Item.UserProperties("Lock PO").Value = 1
+	myControls("textbox29").Value = ""
+	myControls("TextBox35").Value = cStr(Now())
+	refreshForm()
+	Item.Save
+End Sub
+
+Sub CommandButton3_Click()
+	'CHANGE PASSWORD
+	
+	If Not verifyNewPO() Then
+		Exit Sub
+	End If
+	If sha256(myControls("textbox29").Value) = Item.FormDescription.Version Then
+		test1 = InputBox("New Password")
+		If InputBox("Retype Password") = test1 Then
+			Item.FormDescription.Version = sha256(test1)
+			republishForm()
+		Else
+			MsgBox "Passwords do not match"
+		End If
+	Else
+		MsgBox "Invalid Password"
+	End If
+	myControls("textbox29").Value = ""
+End Sub
+
+Function verifyNewPO()
+	'VERIFY NEW PO TO AVOID DATA LOSS
+	If Not myControls("TextBox1").Value = "" _
+	Or Not myControls("TextBox4").Value = "$0.00" _
+	Or Not myControls("TextBox5").Value = "" _
+	Or Not myControls("TextBox6").Value = "" _
+	Or Not myControls("TextBox8").Value = "" _
+	Or Not myControls("TextBox9").Value = "" _
+	Or Not myControls("TextBox10").Value = "" _
+	Or Not myControls("TextBox11").Value = "" _
+	Or Not myControls("TextBox12").Value = "" _
+	Or Not myControls("TextBox13").Value = "" _
+	Or Not myControls("TextBox14").Value = "" _
+	Or Not myControls("TextBox15").Value = "" _
+	Or Not myControls("TextBox17").Value = "" _
+	Or Not myControls("TextBox18").Value = "" _
+	Or Not myControls("TextBox23").Value = "" _
+	Or Not myControls("TextBox24").Value = "" _
+	Or Not myControls("TextBox25").Value = "" _
+	Or Not myControls("TextBox26").Value = "" _
+	Or Not myControls("TextBox27").Value = "" _
+	Or Not myControls("TextBox28").Value = "" _
+	Or Not myControls("TextBox32").Value = "" _
+	Or Not myControls("Department").Value = "" _
+	Or Not myControls("POStatus").Value = "Submitted" _
+	Or Not Item.UserProperties("Payment Method").Value = "" _
+	Or Not Item.Body = "" _
+	Or myControls("Checkbox16").Value Then
+		MsgBox "Use New Purchase Order to Change Password or Email"
+		myControls("textbox29").Value = ""
+		verifyNewPO = false
+	Else
+		verifyNewPO = true
+	End If
+
+End Function
+
+Sub republishForm()
+	'ENSURE SUBFORM CHECKBOXES ARE UNCHECKED FOR PUBLISHING
+	myControls("Checkbox10").Value = 0
+	myControls("Checkbox11").Value = 0
+	myControls("Checkbox12").Value = 0
+	myControls("Checkbox14").Value = 0
+	myControls("Checkbox15").Value = 0
+	myControls("Checkbox17").Value = 0
+	myControls("Checkbox18").Value = 0
+	myControls("Checkbox19").Value = 0
+	myControls("TextBox20").Value = ""
+
+	'OBTAIN PUBLIC FOLDER NAME ON OL 2010+
+	If InStr(Item.Application.Version, "14") Then
+		Set olns = Item.Application.GetNamespace("MAPI")
+		Set accs = olns.Accounts
+		For Each Account In accs
+			If Account.AccountType = olExchange And Account.SmtpAddress = olns.Session.DefaultStore Then
+				Set pub = olns.Folders("Public Folders" & " - " & Account.SmtpAddress)
+			End If
+		Next
+		If pub Is Nothing Then
+			Set pub = ""
+			MsgBox "No Public Folder store found for the default exchange mailbox"
+		End If
+	End If
+
+	'REPUBLISH FORM
+'CHANGE HERE
+	Set MyFolder = pub.Folders("All Public Folders").Folders("Mission").Folders("Accounts Payable")
+	Set MyForm = Item.FormDescription
+'CHANGE HERE
+	MyForm.Name = "Purchase Order"
+	MyForm.PublishForm 3, MyFolder
+
+	Item.Delete()
+
+End Sub
+
+Sub CommandButton4_Click()
+	SendEmail()
+End Sub
+
+Sub CommandButton5_Click()
+	'CHANGE AP Email
+	If Not verifyNewPO() Then
+		Exit Sub
+	End If
+	If sha256(myControls("textbox29").Value) = Item.FormDescription.Version Then
+		Item.FormDescription.Number = InputBox("New Email")
+		republishForm()
+	Else
+		MsgBox "Invalid Password"
+	End If
+	myControls("textbox29").Value = ""
+End Sub
+
+
+Sub SendEmail()
+	'EMAIL PO
+	Set olLook = CreateObject("Outlook.Application")
+	Set NewEmail = olLook.CreateItem(0)
+	NewEmail.Display
+	mybody = NewEmail.HTMLbody
+	With NewEmail
+		.htmlbody = "<br/>If this link fails, open the accounts payable task folder in your public folders, then try the link again."&_
+				vbNewLine&mybody
+		.Subject = "Purchase Order "&myControls("Textbox19").Value&" For Your Approval"
+	End With
+	strLink = Replace("outlook:"&Item.EntryId, " ", "%20")
+	Set objInsp = NewEmail.GetInspector
+	Set objDoc = objInsp.WordEditor
+	Set objSel = objDoc.Windows(1).Selection
+	objDoc.Hyperlinks.Add objSel.Range, strLink, "", "", "PO# "&myControls("Textbox19").Value, ""
+	If Not Item.UserProperties("Lock PO").Value Then
+		myControls("Checkbox19").Value = 1
+		myControls("Label44").Visible = 1
+		myControls("Textbox32").Value = Application.GetNameSpace("MAPI").CurrentUser
+		myControls("Textbox32").Visible = 1
+		Item.UserProperties("Date Emailed").Value = cStr(Now())
+		myControls("TextBox37").Visible = 1
+		myControls("Label45").Visible = 1
+		Item.Save
+	End If
+End Sub
+Sub APSendEmail()
+	'EMAIL PO
+'	SendEmail()
+	myControls("Checkbox18").Value = 1
+	Item.Save
+End Sub
+
+'----------------------------
+'SHA256 Script
+'----------------------------
+' See the VB6 project that accompanies this sample for full code comments on how
+' it works.
+'
+' This is 'free' software with the following restrictions:
+'
+' You may not redistribute this code as a 'sample' or 'demo'. However, you are free
+' to use the source code in your own code, but you may not claim that you created
+' the sample code. It is expressly forbidden to sell or profit from this source code
+' other than by the knowledge gained or the enhanced value added by your own code.
+'
+' Use of this software is also done so at your own risk. The code is supplied as
+' is without warranty or guarantee of any kind.
+'
+' Should you wish to commission some derivative work based on this code provided
+' here, or any consultancy work, please do not hesitate to contact us.
+'
+' Web Site:  http://www.frez.co.uk
+' E-mail:    sales@frez.co.uk
+
+BITS_TO_A_BYTE = 8
+BYTES_TO_A_WORD = 4
+BITS_TO_A_WORD = 32
+
+Set m_lOnBits = CreateObject("Scripting.Dictionary")
+Set m_l2Power = CreateObject("Scripting.Dictionary")
+Set K = CreateObject("Scripting.Dictionary")
+
+m_lOnBits.add 0,CLng(1)
+m_lOnBits.add 1,CLng(3)
+m_lOnBits.add 2,CLng(7)
+m_lOnBits.Add 3, CLng(15)
+m_lOnBits.Add 4, CLng(31)
+m_lOnBits.Add 5, CLng(63)
+m_lOnBits.Add 6, CLng(127)
+m_lOnBits.Add 7, CLng(255)
+m_lOnBits.Add 8, CLng(511)
+m_lOnBits.Add 9, CLng(1023)
+m_lOnBits.Add 10, CLng(2047)
+m_lOnBits.Add 11, CLng(4095)
+m_lOnBits.Add 12, CLng(8191)
+m_lOnBits.Add 13, CLng(16383)
+m_lOnBits.Add 14, CLng(32767)
+m_lOnBits.Add 15, CLng(65535)
+m_lOnBits.Add 16, CLng(131071)
+m_lOnBits.Add 17, CLng(262143)
+m_lOnBits.Add 18, CLng(524287)
+m_lOnBits.Add 19, CLng(1048575)
+m_lOnBits.Add 20, CLng(2097151)
+m_lOnBits.Add 21, CLng(4194303)
+m_lOnBits.Add 22, CLng(8388607)
+m_lOnBits.Add 23, CLng(16777215)
+m_lOnBits.Add 24, CLng(33554431)
+m_lOnBits.Add 25, CLng(67108863)
+m_lOnBits.Add 26, CLng(134217727)
+m_lOnBits.Add 27, CLng(268435455)
+m_lOnBits.Add 28, CLng(536870911)
+m_lOnBits.Add 29, CLng(1073741823)
+m_lOnBits.Add 30, CLng(2147483647)
+
+m_l2Power.Add 0, CLng(1)
+m_l2Power.Add 1, CLng(2)
+m_l2Power.Add 2, CLng(4)
+m_l2Power.Add 3, CLng(8)
+m_l2Power.Add 4, CLng(16)
+m_l2Power.Add 5, CLng(32)
+m_l2Power.Add 6, CLng(64)
+m_l2Power.Add 7, CLng(128)
+m_l2Power.Add 8, CLng(256)
+m_l2Power.Add 9, CLng(512)
+m_l2Power.Add 10, CLng(1024)
+m_l2Power.Add 11, CLng(2048)
+m_l2Power.Add 12, CLng(4096)
+m_l2Power.Add 13, CLng(8192)
+m_l2Power.Add 14, CLng(16384)
+m_l2Power.Add 15, CLng(32768)
+m_l2Power.Add 16, CLng(65536)
+m_l2Power.Add 17, CLng(131072)
+m_l2Power.Add 18, CLng(262144)
+m_l2Power.Add 19, CLng(524288)
+m_l2Power.Add 20, CLng(1048576)
+m_l2Power.Add 21, CLng(2097152)
+m_l2Power.Add 22, CLng(4194304)
+m_l2Power.Add 23, CLng(8388608)
+m_l2Power.Add 24, CLng(16777216)
+m_l2Power.Add 25, CLng(33554432)
+m_l2Power.Add 26, CLng(67108864)
+m_l2Power.Add 27, CLng(134217728)
+m_l2Power.Add 28, CLng(268435456)
+m_l2Power.Add 29, CLng(536870912)
+m_l2Power.Add 30, CLng(1073741824)
+
+    
+K.Add 0, &H428A2F98
+K.Add 1, &H71374491
+K.Add 2, &HB5C0FBCF
+K.Add 3, &HE9B5DBA5
+K.Add 4, &H3956C25B
+K.Add 5, &H59F111F1
+K.Add 6, &H923F82A4
+K.Add 7, &HAB1C5ED5
+K.Add 8, &HD807AA98
+K.Add 9, &H12835B01
+K.Add 10, &H243185BE
+K.Add 11, &H550C7DC3
+K.Add 12, &H72BE5D74
+K.Add 13, &H80DEB1FE
+K.Add 14, &H9BDC06A7
+K.Add 15, &HC19BF174
+K.Add 16, &HE49B69C1
+K.Add 17, &HEFBE4786
+K.Add 18, &HFC19DC6
+K.Add 19, &H240CA1CC
+K.Add 20, &H2DE92C6F
+K.Add 21, &H4A7484AA
+K.Add 22, &H5CB0A9DC
+K.Add 23, &H76F988DA
+K.Add 24, &H983E5152
+K.Add 25, &HA831C66D
+K.Add 26, &HB00327C8
+K.Add 27, &HBF597FC7
+K.Add 28, &HC6E00BF3
+K.Add 29, &HD5A79147
+K.Add 30, &H6CA6351
+K.Add 31, &H14292967
+K.Add 32, &H27B70A85
+K.Add 33, &H2E1B2138
+K.Add 34, &H4D2C6DFC
+K.Add 35, &H53380D13
+K.Add 36, &H650A7354
+K.Add 37, &H766A0ABB
+K.Add 38, &H81C2C92E
+K.Add 39, &H92722C85
+K.Add 40, &HA2BFE8A1
+K.Add 41, &HA81A664B
+K.Add 42, &HC24B8B70
+K.Add 43, &HC76C51A3
+K.Add 44, &HD192E819
+K.Add 45, &HD6990624
+K.Add 46, &HF40E3585
+K.Add 47, &H106AA070
+K.Add 48, &H19A4C116
+K.Add 49, &H1E376C08
+K.Add 50, &H2748774C
+K.Add 51, &H34B0BCB5
+K.Add 52, &H391C0CB3
+K.Add 53, &H4ED8AA4A
+K.Add 54, &H5B9CCA4F
+K.Add 55, &H682E6FF3
+K.Add 56, &H748F82EE
+K.Add 57, &H78A5636F
+K.Add 58, &H84C87814
+K.Add 59, &H8CC70208
+K.Add 60, &H90BEFFFA
+K.Add 61, &HA4506CEB
+K.Add 62, &HBEF9A3F7
+K.Add 63, &HC67178F2
+
+Function LShift(lValue, iShiftBits)
+    If iShiftBits = 0 Then
+        LShift = lValue
+        Exit Function
+    ElseIf iShiftBits = 31 Then
+        If lValue And 1 Then
+            LShift = &H80000000
+        Else
+            LShift = 0
+        End If
+        Exit Function
+    ElseIf iShiftBits < 0 Or iShiftBits > 31 Then
+        Err.Raise 6
+    End If
+    
+    If (lValue And m_l2Power(31 - iShiftBits)) Then
+        LShift = ((lValue And m_lOnBits(31 - (iShiftBits + 1))) * m_l2Power(iShiftBits)) Or &H80000000
+    Else
+        LShift = ((lValue And m_lOnBits(31 - iShiftBits)) * m_l2Power(iShiftBits))
+    End If
+End Function
+
+Function RShift(lValue, iShiftBits)
+    If iShiftBits = 0 Then
+        RShift = lValue
+        Exit Function
+    ElseIf iShiftBits = 31 Then
+        If lValue And &H80000000 Then
+            RShift = 1
+        Else
+            RShift = 0
+        End If
+        Exit Function
+    ElseIf iShiftBits < 0 Or iShiftBits > 31 Then
+        Err.Raise 6
+    End If
+    
+    RShift = (lValue And &H7FFFFFFE) \ m_l2Power(iShiftBits)
+    
+    If (lValue And &H80000000) Then
+        RShift = (RShift Or (&H40000000 \ m_l2Power(iShiftBits - 1)))
+    End If
+End Function
+
+Function AddUnsigned(lX, lY)
+    lX8 = lX And &H80000000
+    lY8 = lY And &H80000000
+    lX4 = lX And &H40000000
+    lY4 = lY And &H40000000
+ 
+    lResult = (lX And &H3FFFFFFF) + (lY And &H3FFFFFFF)
+ 
+    If lX4 And lY4 Then
+        lResult = lResult Xor &H80000000 Xor lX8 Xor lY8
+    ElseIf lX4 Or lY4 Then
+        If lResult And &H40000000 Then
+            lResult = lResult Xor &HC0000000 Xor lX8 Xor lY8
+        Else
+            lResult = lResult Xor &H40000000 Xor lX8 Xor lY8
+        End If
+    Else
+        lResult = lResult Xor lX8 Xor lY8
+    End If
+ 
+    AddUnsigned = lResult
+End Function
+
+Function Ch(x, y, z)
+    Ch = ((x And y) Xor ((Not x) And z))
+End Function
+
+Function Maj(x, y, z)
+    Maj = ((x And y) Xor (x And z) Xor (y And z))
+End Function
+
+Function S(x, n)
+    S = (RShift(x, (n And m_lOnBits(4))) Or LShift(x, (32 - (n And m_lOnBits(4)))))
+End Function
+
+Function R(x, n)
+    R = RShift(x, CInt(n And m_lOnBits(4)))
+End Function
+
+Function Sigma0(x)
+    Sigma0 = (S(x, 2) Xor S(x, 13) Xor S(x, 22))
+End Function
+
+Function Sigma1(x)
+    Sigma1 = (S(x, 6) Xor S(x, 11) Xor S(x, 25))
+End Function
+
+Function Gamma0(x)
+    Gamma0 = (S(x, 7) Xor S(x, 18) Xor R(x, 3))
+End Function
+
+Function Gamma1(x)
+    Gamma1 = (S(x, 17) Xor S(x, 19) Xor R(x, 10))
+End Function
+
+Function ConvertToWordArray(sMessage)
+    MODULUS_BITS = 512
+    CONGRUENT_BITS = 448
+    
+    lMessageLength = Len(sMessage)
+    
+    lNumberOfWords = (((lMessageLength + ((MODULUS_BITS - CONGRUENT_BITS) \ BITS_TO_A_BYTE)) \ (MODULUS_BITS \ BITS_TO_A_BYTE)) + 1) * (MODULUS_BITS \ BITS_TO_A_WORD)
+    ReDim lWordArray(lNumberOfWords - 1)
+    
+    lBytePosition = 0
+    lByteCount = 0
+    Do Until lByteCount >= lMessageLength
+        lWordCount = lByteCount \ BYTES_TO_A_WORD
+        
+        lBytePosition = (3 - (lByteCount Mod BYTES_TO_A_WORD)) * BITS_TO_A_BYTE
+        
+        lByte = AscB(Mid(sMessage, lByteCount + 1, 1))
+        
+        lWordArray(lWordCount) = lWordArray(lWordCount) Or LShift(lByte, lBytePosition)
+        lByteCount = lByteCount + 1
+    Loop
+
+    lWordCount = lByteCount \ BYTES_TO_A_WORD
+    lBytePosition = (3 - (lByteCount Mod BYTES_TO_A_WORD)) * BITS_TO_A_BYTE
+
+    lWordArray(lWordCount) = lWordArray(lWordCount) Or LShift(&H80, lBytePosition)
+
+    lWordArray(lNumberOfWords - 1) = LShift(lMessageLength, 3)
+    lWordArray(lNumberOfWords - 2) = RShift(lMessageLength, 29)
+    
+    ConvertToWordArray = lWordArray
+End Function
+
+Function SHA256(sMessage)
+    SET HASH = CreateObject("Scripting.Dictionary")
+    SET W = CreateObject("Scripting.Dictionary")
+    HASH.Add 0, &H6A09E667
+    HASH.Add 1, &HBB67AE85
+    HASH.Add 2, &H3C6EF372
+    HASH.Add 3, &HA54FF53A
+    HASH.Add 4, &H510E527F
+    HASH.Add 5, &H9B05688C
+    HASH.Add 6, &H1F83D9AB
+    HASH.Add 7, &H5BE0CD19
+    
+    M = ConvertToWordArray(sMessage)
+    
+    For i = 0 To UBound(M) Step 16
+        a = HASH(0)
+        b = HASH(1)
+        c = HASH(2)
+        d = HASH(3)
+        e = HASH(4)
+        f = HASH(5)
+        g = HASH(6)
+        h = HASH(7)
+        
+        For j = 0 To 63
+            If j < 16 Then
+                W.Add j, M(j + i)
+            Else
+                W.Add j, AddUnsigned(AddUnsigned(AddUnsigned(Gamma1(W(j - 2)), W(j - 7)), Gamma0(W(j - 15))), W(j - 16))
+            End If
+                
+            T1 = AddUnsigned(AddUnsigned(AddUnsigned(AddUnsigned(h, Sigma1(e)), Ch(e, f, g)), K(j)), W(j))
+            T2 = AddUnsigned(Sigma0(a), Maj(a, b, c))
+            
+            h = g
+            g = f
+            f = e
+            e = AddUnsigned(d, T1)
+            d = c
+            c = b
+            b = a
+            a = AddUnsigned(T1, T2)
+        Next
+        
+        HASH(0) = AddUnsigned(a, HASH(0))
+        HASH(1) = AddUnsigned(b, HASH(1))
+        HASH(2) = AddUnsigned(c, HASH(2))
+        HASH(3) = AddUnsigned(d, HASH(3))
+        HASH(4) = AddUnsigned(e, HASH(4))
+        HASH(5) = AddUnsigned(f, HASH(5))
+        HASH(6) = AddUnsigned(g, HASH(6))
+        HASH(7) = AddUnsigned(h, HASH(7))
+    Next
+    
+    SHA256 = LCase(Right("00000000" & Hex(HASH(0)), 8) & Right("00000000" & Hex(HASH(1)), 8) & Right("00000000" & Hex(HASH(2)), 8) & Right("00000000" & Hex(HASH(3)), 8) & Right("00000000" & Hex(HASH(4)), 8) & Right("00000000" & Hex(HASH(5)), 8) & Right("00000000" & Hex(HASH(6)), 8) & Right("00000000" & Hex(HASH(7)), 8))
+End Function
+    
