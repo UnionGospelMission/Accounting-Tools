@@ -2,6 +2,10 @@
 '
 'BEFORE PUBLISHING FORM
 'SET USER PROPERTY FIRSTRUN "NO"
+'SET FRAME9 DISABLED
+'SET "P.3" VISIBLE
+'SET "PURCHASE ORDER" HIDDEN
+'SET PO NUMBERS BLANK
 '
 '---------------------------
 Public hasinit
@@ -15,6 +19,8 @@ iter = 0
 Sub Item_Open()
 	'INITIALIZE VARIABLES
 	Set myinspector = Item.GetInspector
+	myinspector.ShowFormPage("Purchase Order")
+	myinspector.HideFormPage("P.3")
 	Set myPage1 = myInspector.ModifiedFormPages("Purchase Order")
 	Set myControls = myPage1.Controls
 	myControls("Frame9").Enabled = 1
@@ -31,8 +37,12 @@ Sub Item_Open()
 		myControls("TextBox19").Enabled = 0
 		myControls("Textbox20").Value = Item.Owner
 		myControls("Checkbox12").Value = 1
-		Item.Save
 	End If
+
+	'REFRESH PO NUMBER
+	myControls("Textbox33").Value = myControls("Textbox19").Value
+	Item.Save
+
 	If Not Item.UserProperties("Special Instructions").Value = "" Then
 		Item.Body = Item.UserProperties("Special Instructions").Value
 	End If
@@ -123,25 +133,27 @@ Sub Item_CustomPropertyChange(ByVal Name)
 				refreshForm()
 		End Select
 	Else
-		Set myinspector = Item.GetInspector
-		Set myPage1 = myInspector.ModifiedFormPages("Purchase Order")
-		Set myControls = myPage1.Controls
-		If (Item.UserProperties("FirstRun").Value or Name = "FirstRun") And Not sha256(myControls("Textbox29").Value) = Item.FormDescription.Version Then
-			Set myNameSpace = Application.GetNameSpace("MAPI") 
-			Item.UserProperties("Vendor").Value = "PO Compromised by "&myNameSpace.CurrentUser&" "&Item.UserProperties("Vendor").Value
-			Item.UserProperties("Lock PO").Value = 1
-			Set olLook = CreateObject("Outlook.Application")
-			Set NewEmail = olLook.CreateItem(0)
-			strLink = Replace("outlook:"&Item.EntryId, " ", "%20")
-			Set objInsp = NewEmail.GetInspector
-			Set objDoc = objInsp.WordEditor
-			Set objSel = objDoc.Windows(1).Selection
-			objDoc.Hyperlinks.Add objSel.Range, strLink, "", "", "PO# "&myControls("Textbox19").Value, ""
-			With NewEmail
-				.To = Item.FormDescription.Number
-				.Subject = "I just compromised Purchase Order "&myControls("Textbox19").Value
-				.Send
-			End With
+		If Item.UserProperties("Vendor").Value = "True" Then
+			Set myinspector = Item.GetInspector
+			Set myPage1 = myInspector.ModifiedFormPages("Purchase Order")
+			Set myControls = myPage1.Controls
+			If (Item.UserProperties("FirstRun").Value or Name = "FirstRun") And Not sha256(myControls("Textbox29").Value) = Item.FormDescription.Version Then
+				Set myNameSpace = Application.GetNameSpace("MAPI") 
+				Item.UserProperties("Vendor").Value = "PO Compromised by "&myNameSpace.CurrentUser&" "&Item.UserProperties("Vendor").Value
+				Item.UserProperties("Lock PO").Value = 1
+				Set olLook = CreateObject("Outlook.Application")
+				Set NewEmail = olLook.CreateItem(0)
+				strLink = Replace("outlook:"&Item.EntryId, " ", "%20")
+				Set objInsp = NewEmail.GetInspector
+				Set objDoc = objInsp.WordEditor
+				Set objSel = objDoc.Windows(1).Selection
+				objDoc.Hyperlinks.Add objSel.Range, strLink, "", "", "PO# "&myControls("Textbox19").Value, ""
+				With NewEmail
+					.To = Item.FormDescription.Number
+					.Subject = "I just compromised Purchase Order "&myControls("Textbox19").Value
+					.Send
+				End With
+			End If
 		End If
 	End If
 End Sub
@@ -815,4 +827,3 @@ Function SHA256(sMessage)
     
     SHA256 = LCase(Right("00000000" & Hex(HASH(0)), 8) & Right("00000000" & Hex(HASH(1)), 8) & Right("00000000" & Hex(HASH(2)), 8) & Right("00000000" & Hex(HASH(3)), 8) & Right("00000000" & Hex(HASH(4)), 8) & Right("00000000" & Hex(HASH(5)), 8) & Right("00000000" & Hex(HASH(6)), 8) & Right("00000000" & Hex(HASH(7)), 8))
 End Function
-    
